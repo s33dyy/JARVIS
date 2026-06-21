@@ -16,7 +16,7 @@ os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 # Token provided by user
 TODOIST_TOKEN = os.environ.get("JARVIS_TODOIST_TOKEN", "2339137af383dabd9dc7cbe00a425cce6dea9626")
-BASE_URL = "https://api.todoist.com/rest/v2"
+BASE_URL = "https://api.todoist.com/api/v1"
 
 def _get_headers():
     return {

@@ -949,7 +949,7 @@ def handle_action(question: str, pending: dict) -> tuple[str, dict]:
         else:
             return "Self improvement rejected. Discarding the Antigravity proposal.", {}
 
-    if re.search(r"\b(fix this bug|i found a bug|implement a feature|analyze your performance|improve yourself)\b", q):
+    if re.search(r"\b(fix this bug|i found a bug|implement a feature|analyze your performance|improve yourself|problems.*in yourself|wrong with you|fix yourself)\b", q):
         try:
             from openjarvis.jarvis_self_improvement import SelfImprovementOrchestrator
             import threading
