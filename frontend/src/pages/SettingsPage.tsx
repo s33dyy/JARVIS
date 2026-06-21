@@ -630,6 +630,45 @@ export function SettingsPage() {
           </Section>
 
           {/* Data */}
+          <Section title="JARVIS OS Configuration">
+            <SettingRow
+              label="OS Persona"
+              description="Determines how JARVIS organizes your background tasks."
+            >
+              <select
+                className="px-2 py-1 rounded text-xs outline-none"
+                style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                value={localStorage.getItem('JARVIS_USE_CASE') || 'Developer'}
+                onChange={(e) => {
+                  localStorage.setItem('JARVIS_USE_CASE', e.target.value);
+                  window.location.reload();
+                }}
+              >
+                <option value="Developer">Developer</option>
+                <option value="Creator">Creator</option>
+                <option value="Manager">Manager</option>
+              </select>
+            </SettingRow>
+
+            <SettingRow
+              label="Data Ingestion Mode"
+              description="How should the proactive engines gather data?"
+            >
+              <select
+                className="px-2 py-1 rounded text-xs outline-none"
+                style={{ background: 'var(--color-bg)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                value={localStorage.getItem('JARVIS_INGESTION_MODE') || 'manual'}
+                onChange={(e) => {
+                  localStorage.setItem('JARVIS_INGESTION_MODE', e.target.value);
+                  window.location.reload();
+                }}
+              >
+                <option value="manual">Manual (Ask me)</option>
+                <option value="api">API (Automatic)</option>
+              </select>
+            </SettingRow>
+          </Section>
+
           <Section title="Data">
             <SettingRow label="Conversations" description={`${conversations.length} stored locally`}>
               <div className="flex gap-2">

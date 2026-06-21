@@ -259,12 +259,28 @@ impl Default for EngineConfig {
 // Intelligence config
 // ---------------------------------------------------------------------------
 
+fn fallback_probe_default() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FallbackConfig {
+    #[serde(default)]
+    pub engine: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default = "fallback_probe_default")]
+    pub probe: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IntelligenceConfig {
     #[serde(default)]
     pub default_model: String,
     #[serde(default)]
     pub fallback_model: String,
+    #[serde(default)]
+    pub fallbacks: Vec<FallbackConfig>,
     #[serde(default)]
     pub model_path: String,
     #[serde(default)]
@@ -301,6 +317,7 @@ impl Default for IntelligenceConfig {
         Self {
             default_model: String::new(),
             fallback_model: String::new(),
+            fallbacks: vec![],
             model_path: String::new(),
             checkpoint_path: String::new(),
             quantization: default_quantization_str(),

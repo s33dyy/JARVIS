@@ -183,6 +183,14 @@ class Jarvis:
             except Exception as exc:
                 logger.warning("Failed to initialize telemetry store: %s", exc)
 
+        from openjarvis.engine.fallbacks import FallbackCandidate
+        self._fallback_candidates = []
+        if not self._engine_key and not self._model_override and self._config.intelligence.fallbacks:
+            if self._config.intelligence.default_model:
+                pref = self._config.intelligence.preferred_engine or self._config.engine.default
+                self._fallback_candidates.append(FallbackCandidate(engine=pref, model=self._config.intelligence.default_model, probe=True))
+            self._fallback_candidates.extend([FallbackCandidate.from_dict(d) for d in self._config.intelligence.fallbacks])
+
     @property
     def config(self) -> JarvisConfig:
         """Return the active configuration."""
@@ -206,7 +214,20 @@ class Jarvis:
 
         pref = self._config.intelligence.preferred_engine
         engine_key = self._engine_key or pref or None
-        resolved = get_engine(self._config, engine_key)
+
+        resolved = None
+        if self._fallback_candidates:
+            from openjarvis.engine.fallbacks import resolve_fallback_candidate
+            candidate = resolve_fallback_candidate(self._config, self._fallback_candidates)
+            if not candidate:
+                raise RuntimeError("All explicit fallback candidates exhausted or unavailable.")
+            resolved = get_engine(self._config, candidate.engine)
+            if resolved:
+                self._model_override = candidate.model
+
+        if resolved is None:
+            resolved = get_engine(self._config, engine_key)
+            
         if resolved is None:
             raise RuntimeError(
                 "No inference engine available. "
@@ -281,9 +302,10 @@ class Jarvis:
 
         Returns a dict with keys: content, usage, tool_results (if agent mode).
         """
-        self._ensure_engine()
-        if temperature is None:
-            temperature = self._config.intelligence.temperature
+        while True:
+            self._ensure_engine()
+            if temperature is None:
+                temperature = self._config.intelligence.temperature
         if max_tokens is None:
             max_tokens = self._config.intelligence.max_tokens
 
@@ -342,9 +364,10 @@ class Jarvis:
         context: bool = True,
     ) -> AsyncIterator[str]:
         """Stream tokens as they are generated. Yields token strings."""
-        self._ensure_engine()
-        if temperature is None:
-            temperature = self._config.intelligence.temperature
+        while True:
+            self._ensure_engine()
+            if temperature is None:
+                temperature = self._config.intelligence.temperature
         if max_tokens is None:
             max_tokens = self._config.intelligence.max_tokens
 
@@ -385,9 +408,10 @@ class Jarvis:
         The final dict has ``done: True`` along with the full concatenated
         ``content``, ``model``, and ``engine`` keys.
         """
-        self._ensure_engine()
-        if temperature is None:
-            temperature = self._config.intelligence.temperature
+        while True:
+            self._ensure_engine()
+            if temperature is None:
+                temperature = self._config.intelligence.temperature
         if max_tokens is None:
             max_tokens = self._config.intelligence.max_tokens
 

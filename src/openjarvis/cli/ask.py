@@ -713,204 +713,235 @@ def ask(
     # Discover engines
     register_builtin_models()
 
-    effective_engine_key = engine_key or config.intelligence.preferred_engine or None
-    # Pass the model we intend to run so engine selection can skip an engine
-    # that can't actually serve it (e.g. the cloud fallback when the local
-    # engine is down but only a non-OpenAI key is set — see #532). This is the
-    # -m flag or the configured default; when neither is set we leave it None
-    # and a model is chosen per-engine below.
-    selection_model = model_name or config.intelligence.default_model or None
-    resolved = get_engine(config, effective_engine_key, model=selection_model)
-    if resolved is None:
-        console.print(
-            "[red bold]No inference engine available.[/red bold]\n\n"
-            "Make sure an engine is running:\n"
-            "  [cyan]ollama serve[/cyan]          — start Ollama\n"
-            "  [cyan]vllm serve <model>[/cyan]    — start vLLM\n"
-            "  [cyan]llama-server -m <gguf>[/cyan] — start llama.cpp\n\n"
-            "Or set OPENAI_API_KEY / ANTHROPIC_API_KEY for cloud inference.\n\n"
-            "[dim]To use a remote engine:[/dim]\n"
-            "  [cyan]jarvis config set engine.ollama.host http://<remote-ip>:11434[/cyan]\n"
-            "  [dim]or[/dim] [cyan]export OLLAMA_HOST=http://<remote-ip>:11434[/cyan]"
-        )
-        sys.exit(1)
 
-    engine_name, engine = resolved
+    from openjarvis.engine.fallbacks import FallbackCandidate, resolve_fallback_candidate, is_provider_capacity_error, mark_candidate_exhausted
+    
+    fallback_candidates = []
+    if not engine_key and not model_name and config.intelligence.fallbacks:
+        if config.intelligence.default_model:
+            pref = config.intelligence.preferred_engine or config.engine.default
+            fallback_candidates.append(FallbackCandidate(engine=pref, model=config.intelligence.default_model, probe=True))
+        fallback_candidates.extend([FallbackCandidate.from_dict(d) for d in config.intelligence.fallbacks])
 
-    # ------------------------------------------------------------------
-    # Research mode — hybrid search + agentic loop over the knowledge store
-    # ------------------------------------------------------------------
-    if research_mode:
-        _run_research(
-            query_text=query_text,
-            engine=engine,
-            model_name=model_name,
-            knowledge_db=knowledge_db,
-            output_json=output_json,
-            console=console,
-        )
-        return
-
-    # Apply security guardrails
-    from openjarvis.security import setup_security
-
-    sec = setup_security(config, engine, bus)
-    engine = sec.engine
-
-    # Wrap engine with InstrumentedEngine for telemetry (energy + GPU metrics)
-    energy_monitor = None
-    want_energy = config.telemetry.gpu_metrics or enable_profile
-    if want_energy:
+    while True:
         try:
-            from openjarvis.telemetry.energy_monitor import create_energy_monitor
+            effective_engine_key = engine_key or config.intelligence.preferred_engine or None
+            selection_model = model_name or config.intelligence.default_model or None
 
-            energy_monitor = create_energy_monitor(
-                prefer_vendor=config.telemetry.energy_vendor or None,
-            )
-        except Exception as exc:
-            logger.debug("Failed to create energy monitor: %s", exc)
-    engine = InstrumentedEngine(engine, bus, energy_monitor=energy_monitor)
+            resolved = None
+            if fallback_candidates:
+                candidate = resolve_fallback_candidate(config, fallback_candidates)
+                if not candidate:
+                    console.print("[red bold]All explicit fallback candidates exhausted or unavailable.[/red bold]")
+                    sys.exit(1)
+                resolved = get_engine(config, candidate.engine)
+                if resolved:
+                    model_name = candidate.model
+                else:
+                    mark_candidate_exhausted(candidate.engine, candidate.model)
+                    continue
+            
+            if resolved is None:
+                resolved = get_engine(config, effective_engine_key, model=selection_model)
 
-    # Discover models and merge into registry
-    all_engines = discover_engines(config)
-    all_models = discover_models(all_engines)
-    for ek, model_ids in all_models.items():
-        merge_discovered_models(ek, model_ids)
-
-    # Resolve model via config fallback chain
-    if model_name is None:
-        model_name = config.intelligence.default_model
-    if not model_name:
-        # Try first available from engine
-        engine_models = all_models.get(engine_name, [])
-        if engine_models:
-            model_name = engine_models[0]
-    if not model_name:
-        model_name = config.intelligence.fallback_model
-    if not model_name:
-        console.print("[red]No model available on engine.[/red]")
-        sys.exit(1)
-
-    # Apply complexity-suggested token budget when user didn't override.
-    # Use at least the config default so we never reduce tokens below what
-    # the user would have gotten without the analyzer.
-    if not user_set_max_tokens:
-        suggested = adjust_tokens_for_model(
-            complexity_result.suggested_max_tokens,
-            model_name,
-        )
-        max_tokens = max(suggested, config.intelligence.max_tokens)
-        logger.debug(
-            "Using complexity-suggested max_tokens=%d (model=%s)",
-            max_tokens,
-            model_name,
-        )
-
-    # Agent mode (treat empty-string `--agent ""` as explicit opt-out)
-    if agent_name:
-        parsed_tools = resolve_tool_names(
-            tool_names,
-            getattr(config.tools, "enabled", None),
-            getattr(config.agent, "tools", None),
-        )
-        try:
-            result = _run_agent(
-                agent_name,
-                query_text,
-                engine,
-                model_name,
-                parsed_tools,
-                config,
-                bus,
-                temperature,
-                max_tokens,
-                capability_policy=sec.capability_policy,
-                memory_files_config=effective_mf,
-            )
-        except EngineConnectionError as exc:
-            console.print(f"[red]Engine error:[/red] {exc}")
-            console.print(hint_no_engine())
-            sys.exit(1)
-
-        if output_json:
-            click.echo(
-                json_mod.dumps(
-                    {
-                        "content": result.content,
-                        "turns": result.turns,
-                        "tool_results": [
+            if resolved is None:
+                console.print(
+                    "[red bold]No inference engine available.[/red bold]\n\n"
+                    "Make sure an engine is running:\n"
+                    "  [cyan]ollama serve[/cyan]          — start Ollama\n"
+                    "  [cyan]vllm serve <model>[/cyan]    — start vLLM\n"
+                    "  [cyan]llama-server -m <gguf>[/cyan] — start llama.cpp\n\n"
+                    "Or set OPENAI_API_KEY / ANTHROPIC_API_KEY for cloud inference.\n\n"
+                    "[dim]To use a remote engine:[/dim]\n"
+                    "  [cyan]jarvis config set engine.ollama.host http://<remote-ip>:11434[/cyan]\n"
+                    "  [dim]or[/dim] [cyan]export OLLAMA_HOST=http://<remote-ip>:11434[/cyan]"
+                )
+                sys.exit(1)
+        
+            engine_name, engine = resolved
+        
+            # ------------------------------------------------------------------
+            # Research mode — hybrid search + agentic loop over the knowledge store
+            # ------------------------------------------------------------------
+            if research_mode:
+                _run_research(
+                    query_text=query_text,
+                    engine=engine,
+                    model_name=model_name,
+                    knowledge_db=knowledge_db,
+                    output_json=output_json,
+                    console=console,
+                )
+                return
+        
+            # Apply security guardrails
+            from openjarvis.security import setup_security
+        
+            sec = setup_security(config, engine, bus)
+            engine = sec.engine
+        
+            # Wrap engine with InstrumentedEngine for telemetry (energy + GPU metrics)
+            energy_monitor = None
+            want_energy = config.telemetry.gpu_metrics or enable_profile
+            if want_energy:
+                try:
+                    from openjarvis.telemetry.energy_monitor import create_energy_monitor
+        
+                    energy_monitor = create_energy_monitor(
+                        prefer_vendor=config.telemetry.energy_vendor or None,
+                    )
+                except Exception as exc:
+                    logger.debug("Failed to create energy monitor: %s", exc)
+            engine = InstrumentedEngine(engine, bus, energy_monitor=energy_monitor)
+        
+            # Discover models and merge into registry
+            all_engines = discover_engines(config)
+            all_models = discover_models(all_engines)
+            for ek, model_ids in all_models.items():
+                merge_discovered_models(ek, model_ids)
+        
+            # Resolve model via config fallback chain
+            if model_name is None:
+                model_name = config.intelligence.default_model
+            if not model_name:
+                # Try first available from engine
+                engine_models = all_models.get(engine_name, [])
+                if engine_models:
+                    model_name = engine_models[0]
+            if not model_name:
+                model_name = config.intelligence.fallback_model
+            if not model_name:
+                console.print("[red]No model available on engine.[/red]")
+                sys.exit(1)
+        
+            # Apply complexity-suggested token budget when user didn't override.
+            # Use at least the config default so we never reduce tokens below what
+            # the user would have gotten without the analyzer.
+            if not user_set_max_tokens:
+                suggested = adjust_tokens_for_model(
+                    complexity_result.suggested_max_tokens,
+                    model_name,
+                )
+                max_tokens = max(suggested, config.intelligence.max_tokens)
+                logger.debug(
+                    "Using complexity-suggested max_tokens=%d (model=%s)",
+                    max_tokens,
+                    model_name,
+                )
+        
+            # Agent mode (treat empty-string `--agent ""` as explicit opt-out)
+            if agent_name:
+                parsed_tools = resolve_tool_names(
+                    tool_names,
+                    getattr(config.tools, "enabled", None),
+                    getattr(config.agent, "tools", None),
+                )
+                try:
+                    result = _run_agent(
+                        agent_name,
+                        query_text,
+                        engine,
+                        model_name,
+                        parsed_tools,
+                        config,
+                        bus,
+                        temperature,
+                        max_tokens,
+                        capability_policy=sec.capability_policy,
+                        memory_files_config=effective_mf,
+                    )
+                except EngineConnectionError as exc:
+                    console.print(f"[red]Engine error:[/red] {exc}")
+                    console.print(hint_no_engine())
+                    sys.exit(1)
+        
+                if output_json:
+                    click.echo(
+                        json_mod.dumps(
                             {
-                                "tool_name": tr.tool_name,
-                                "content": tr.content,
-                                "success": tr.success,
-                            }
-                            for tr in result.tool_results
-                        ],
-                    },
-                    indent=2,
-                )
-            )
-        else:
-            click.echo(result.content)
-
-        if enable_profile:
-            _print_profile(
-                bus,
-                time.monotonic() - wall_start,
-                engine_name,
-                model_name,
-                console,
-                complexity_result=complexity_result,
-            )
-
-        if telem_store is not None:
+                                "content": result.content,
+                                "turns": result.turns,
+                                "tool_results": [
+                                    {
+                                        "tool_name": tr.tool_name,
+                                        "content": tr.content,
+                                        "success": tr.success,
+                                    }
+                                    for tr in result.tool_results
+                                ],
+                            },
+                            indent=2,
+                        )
+                    )
+                else:
+                    click.echo(result.content)
+        
+                if enable_profile:
+                    _print_profile(
+                        bus,
+                        time.monotonic() - wall_start,
+                        engine_name,
+                        model_name,
+                        console,
+                        complexity_result=complexity_result,
+                    )
+        
+                if telem_store is not None:
+                    try:
+                        telem_store.close()
+                    except Exception as exc:
+                        logger.debug("Error closing telemetry store: %s", exc)
+                return
+        
+            # Direct-to-engine mode (no agent)
+            messages = [Message(role=Role.USER, content=query_text)]
+        
+            # Memory-augmented context injection
+            if not no_context and config.agent.context_from_memory:
+                try:
+                    from openjarvis.tools.storage.context import (
+                        ContextConfig,
+                        inject_context,
+                    )
+        
+                    backend = _get_memory_backend(config)
+                    if backend is not None:
+                        ctx_cfg = ContextConfig(
+                            top_k=config.memory.context_top_k,
+                            min_score=config.memory.context_min_score,
+                            max_context_tokens=(config.memory.context_max_tokens),
+                        )
+                        messages = inject_context(
+                            query_text,
+                            messages,
+                            backend,
+                            config=ctx_cfg,
+                        )
+                except Exception as exc:
+                    logger.debug("Failed to inject memory context: %s", exc)
+        
+            # Generate (InstrumentedEngine handles telemetry + energy recording)
             try:
-                telem_store.close()
-            except Exception as exc:
-                logger.debug("Error closing telemetry store: %s", exc)
-        return
+                with console.status("[bold green]Generating...[/bold green]"):
+                    result = engine.generate(
+                        messages,
+                        model=model_name,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+            except EngineConnectionError as exc:
+                console.print(f"[red]Engine error:[/red] {exc}")
+                console.print(hint_no_engine())
+                sys.exit(1)
+        
 
-    # Direct-to-engine mode (no agent)
-    messages = [Message(role=Role.USER, content=query_text)]
-
-    # Memory-augmented context injection
-    if not no_context and config.agent.context_from_memory:
-        try:
-            from openjarvis.tools.storage.context import (
-                ContextConfig,
-                inject_context,
-            )
-
-            backend = _get_memory_backend(config)
-            if backend is not None:
-                ctx_cfg = ContextConfig(
-                    top_k=config.memory.context_top_k,
-                    min_score=config.memory.context_min_score,
-                    max_context_tokens=(config.memory.context_max_tokens),
-                )
-                messages = inject_context(
-                    query_text,
-                    messages,
-                    backend,
-                    config=ctx_cfg,
-                )
         except Exception as exc:
-            logger.debug("Failed to inject memory context: %s", exc)
-
-    # Generate (InstrumentedEngine handles telemetry + energy recording)
-    try:
-        with console.status("[bold green]Generating...[/bold green]"):
-            result = engine.generate(
-                messages,
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-    except EngineConnectionError as exc:
-        console.print(f"[red]Engine error:[/red] {exc}")
-        console.print(hint_no_engine())
-        sys.exit(1)
-
+            if fallback_candidates and is_provider_capacity_error(exc):
+                console.print(f"[yellow]Configured model '{model_name}' unavailable or out of credits; falling back...[/yellow]")
+                mark_candidate_exhausted(engine_name, model_name)
+                continue
+            raise
+        break
     # Output
     if output_json:
         click.echo(json_mod.dumps(result, indent=2))

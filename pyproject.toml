@@ -40,6 +40,12 @@ dependencies = [
     "tomli>=2.0; python_version < '3.11'",
     "tomlkit>=0.12",
     "websockets>=15.0.1",
+    "customtkinter>=5.2.0",
+    "sounddevice>=0.4.6",
+    "faster-whisper>=1.0.0",
+    "openwakeword>=0.6.0",
+    "python-dotenv>=1.0.0",
+    "google-antigravity>=0.1.4",
 ]
 
 [project.optional-dependencies]

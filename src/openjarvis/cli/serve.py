@@ -152,7 +152,27 @@ def serve(
     selection_model = (
         model_name or config.server.model or config.intelligence.default_model or None
     )
-    resolved = get_engine(config, engine_key, model=selection_model)
+
+    from openjarvis.engine.fallbacks import FallbackCandidate, resolve_fallback_candidate
+    fallback_candidates = []
+    if not engine_key and not model_name and config.intelligence.fallbacks:
+        if config.intelligence.default_model:
+            pref = config.intelligence.preferred_engine or config.engine.default
+            fallback_candidates.append(FallbackCandidate(engine=pref, model=config.intelligence.default_model, probe=True))
+        fallback_candidates.extend([FallbackCandidate.from_dict(d) for d in config.intelligence.fallbacks])
+
+    resolved = None
+    if fallback_candidates:
+        candidate = resolve_fallback_candidate(config, fallback_candidates)
+        if not candidate:
+            console.print("[red bold]All explicit fallback candidates exhausted or unavailable.[/red bold]")
+            sys.exit(1)
+        resolved = get_engine(config, candidate.engine)
+        if resolved:
+            selection_model = candidate.model
+
+    if resolved is None:
+        resolved = get_engine(config, engine_key, model=selection_model)
     if resolved is None:
         console.print(
             "[red bold]No inference engine available.[/red bold]\n\n"

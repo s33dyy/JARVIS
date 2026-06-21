@@ -115,8 +115,28 @@ class SystemBuilder:
         config = self._config
         bus = self._bus or get_event_bus()
 
-        engine, engine_key = self._resolve_engine(config)
-        model = self._resolve_model(config, engine)
+        engine, engine_key = None, None
+        model = ""
+
+        if not self._engine_instance and not self._engine_key and not self._model and config.intelligence.fallbacks:
+            from openjarvis.engine.fallbacks import FallbackCandidate, resolve_fallback_candidate
+            candidates = []
+            pref_engine = config.intelligence.preferred_engine or config.engine.default
+            if config.intelligence.default_model:
+                candidates.append(FallbackCandidate(engine=pref_engine, model=config.intelligence.default_model, probe=True))
+            candidates.extend([FallbackCandidate.from_dict(d) for d in config.intelligence.fallbacks])
+            
+            candidate = resolve_fallback_candidate(config, candidates)
+            if candidate:
+                from openjarvis.engine._discovery import get_engine
+                resolved = get_engine(config, candidate.engine)
+                if resolved:
+                    engine_key, engine = resolved
+                    model = candidate.model
+
+        if engine is None:
+            engine, engine_key = self._resolve_engine(config)
+            model = self._resolve_model(config, engine)
 
         telemetry_enabled = (
             self._telemetry if self._telemetry is not None else config.telemetry.enabled
