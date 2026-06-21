@@ -15,6 +15,12 @@ class AntigravityClient:
         and asks it to propose a solution and implement it.
         """
         try:
+            import os
+            # Map JARVIS_GEMINI_KEY to GEMINI_API_KEY for the Antigravity SDK
+            jarvis_key = os.environ.get("JARVIS_GEMINI_KEY", "")
+            if jarvis_key and not os.environ.get("GEMINI_API_KEY"):
+                os.environ["GEMINI_API_KEY"] = jarvis_key
+
             from google.antigravity import Agent, LocalAgentConfig
             
             # Formulate the prompt

@@ -44,6 +44,7 @@ uv run pyinstaller --name "JARVIS" \
             --hidden-import "jarvis_listen" \
             --hidden-import "jarvis_llm" \
             --hidden-import "jarvis_crm" \
+            --hidden-import "jarvis_failure_store" \
             --hidden-import "customtkinter" \
             --collect-data "certifi" \
             jarvis_ui.py

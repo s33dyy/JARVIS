@@ -218,6 +218,12 @@ def ask_jarvis(question: str, jarvis_dir: str) -> str:
     except Exception:
         todoist_mood = ""
 
+    try:
+        from jarvis_failure_store import get_health_summary_for_llm
+        health_ctx = get_health_summary_for_llm()
+    except Exception:
+        health_ctx = ""
+
     system = (
         "You are JARVIS, Tony Stark's AI, acting as an ADHD coach for the user. British, witty, concise. "
         "Always address user as 'sir'. Break tasks into tiny 15-minute micro-steps to prevent overwhelm. "
@@ -226,7 +232,10 @@ def ask_jarvis(question: str, jarvis_dir: str) -> str:
         "User's current state based on recent CRM/Messages:\n"
         f"{crm_state}\n\n"
         "User's current task load:\n"
-        f"{todoist_mood}"
+        f"{todoist_mood}\n\n"
+        f"{health_ctx}\n\n"
+        "CRITICAL: If system failures are listed above, you MUST report them honestly. "
+        "Never say 'everything is fine' when failures exist."
     )
 
     def _clean(txt: str) -> str:
@@ -339,6 +348,15 @@ def main() -> None:
     args, _ = parser.parse_known_args()
 
     jarvis_dir = str(Path(__file__).parent)
+    
+    perf_mode = os.environ.get("JARVIS_PERFORMANCE_MODE", "Balanced")
+    if perf_mode == "M3 Air 8GB (Low Power)":
+        if args.whisper_model == "small.en":  # Override default
+            args.whisper_model = "tiny.en"
+        # Only download the specific model needed to save memory and SSD IO
+        ww_models_to_download = ["hey_jarvis_v0.1"] 
+    else:
+        ww_models_to_download = None # downloads all default models
 
     print()
     print("  ╔══════════════════════════════════════╗")
@@ -357,7 +375,10 @@ def main() -> None:
 
     # ── Load wake word model ──────────────────────────────────
     print("  📥  Loading wake word model...", end=" ", flush=True)
-    openwakeword.utils.download_models()
+    if perf_mode == "M3 Air 8GB (Low Power)":
+        openwakeword.utils.download_models(model_names=ww_models_to_download)
+    else:
+        openwakeword.utils.download_models()
     ww_model = WakeWordModel(wakeword_models=WAKE_WORDS, inference_framework="onnx")
     print("✅  ready")
 
@@ -493,12 +514,84 @@ def main() -> None:
                 speak("Continuous mode activated, sir.", block=True)
                 return "ENTER_CONTINUOUS"
 
+            # ── Evaluator: Check for user corrections ─────────────────
+            try:
+                from jarvis_evaluator import evaluate_correction
+                is_corr, apology = evaluate_correction(question)
+                if is_corr:
+                    print("  ❌  User Correction Detected. Logging failure.", flush=True)
+                    speak(apology, block=True)
+                    return None
+            except Exception as e:
+                print(f"  ⚠️  Evaluator error: {e}", flush=True)
+
+            # ── Health diagnostic intercept ──────────────────────────────────
+            # Engineer Mode: real subsystem checks, NEVER the LLM.
+            # is_health_query() is pure regex — zero latency.
+            # get_diagnostic_response() reads real health check data, never LLM.
+            try:
+                from jarvis_diagnostics import is_health_query, get_diagnostic_response
+                if is_health_query(question):
+                    print("  🏥  Health query — running subsystem checks...", flush=True)
+                    diagnostic_report = get_diagnostic_response()
+                    print("  🏥  JARVIS: [Health Report Spoken]", flush=True)
+                    speak(diagnostic_report, block=True)
+                    try:
+                        from jarvis_evaluator import save_interaction
+                        save_interaction(question, "intent_diagnostic", "Report spoken", success=True)
+                    except Exception:
+                        pass
+                    return None
+            except Exception as _diag_err:
+                print(f"  ⚠️  Diagnostics module error: {_diag_err}", flush=True)
+
+            # ── Self-improvement intent intercept ──────────────────────────────
+            # Self-Development Mode: reads failure data verbatim from disk, NEVER LLM.
+            # is_improvement_query() is pure regex — zero latency.
+            # get_nightly_review_summary() reads ~/.jarvis/health_failures.json +
+            # error_database.json and reports facts, not reassurance.
+            try:
+                from jarvis_diagnostics import is_improvement_query
+                from jarvis_self_improvement import (
+                    get_nightly_review_summary,
+                    trigger_on_demand_analysis,
+                )
+                if is_improvement_query(question):
+                    q_lower_imp = question.lower()
+                    # "analyze yourself" → background Antigravity call
+                    if re.search(
+                        r"\b(analyze yourself|self.analy|improve yourself|self improvement)\b",
+                        q_lower_imp
+                    ):
+                        print("  🧠  Self-analysis triggered — spinning up Antigravity...", flush=True)
+                        ack = trigger_on_demand_analysis()
+                        speak(ack, block=True)
+                    else:
+                        # All other improvement queries → spoken review from disk data
+                        print("  🧠  Self-improvement query — reading failure logs...", flush=True)
+                        review = get_nightly_review_summary()
+                        print("  🧠  JARVIS: [Self-Development Review Spoken]", flush=True)
+                        speak(review, block=True)
+                    try:
+                        from jarvis_evaluator import save_interaction
+                        save_interaction(question, "intent_self_improvement", "Review spoken", success=True)
+                    except Exception:
+                        pass
+                    return None
+            except Exception as _imp_err:
+                print(f"  ⚠️  Self-improvement module error: {_imp_err}", flush=True)
+
             # ── Try action engine first ───────
             action_response, new_pending = handle_action(question, pending)
             if action_response:
                 pending_state = new_pending
                 print(f"  ✅  Action: \"{action_response}\"", flush=True)
                 speak(action_response, block=True)
+                try:
+                    from jarvis_evaluator import save_interaction
+                    save_interaction(question, "intent_action", action_response, success=True)
+                except Exception:
+                    pass
                 return None
 
             # ── Fall back to LLM for general queries ──
@@ -506,6 +599,12 @@ def main() -> None:
             answer = ask_jarvis(question, jarvis_dir)
             print(f"  🤖  JARVIS: \"{answer}\"", flush=True)
             speak(answer, block=True)
+            
+            try:
+                from jarvis_evaluator import save_interaction
+                save_interaction(question, "llm_response", answer, success=True)
+            except Exception:
+                pass
 
         finally:
             if not continuous_mode:
@@ -524,6 +623,18 @@ def main() -> None:
         else:
             print("  ✨  Say 'Hey JARVIS' to wake me up. Press Ctrl+C to stop.")
             speak("JARVIS is online and listening, sir.", block=False)
+            
+            try:
+                from jarvis_health import run_health_checks
+                report = run_health_checks(force=True)
+                if report.get("overall") != "healthy":
+                    speak(f"Warning: system health is {report.get('overall')}. "
+                          f"{report.get('critical_count', 0)} critical, "
+                          f"{report.get('high_count', 0)} high severity issues detected.",
+                          block=True)
+            except Exception as e:
+                print(f"  ⚠️  Startup health check failed: {e}", flush=True)
+
         print()
 
         # ── Mic callback + main loop ──────────────────────────────

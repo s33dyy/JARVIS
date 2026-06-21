@@ -47,6 +47,29 @@ def _llm(prompt: str, max_tokens: int = 200, system: str = "") -> str:
 
 
 # ─────────────────────────────────────────────────────────────
+# Reality Layer — failure reporting
+# ─────────────────────────────────────────────────────────────
+def _action_failed(component: str, reason: str) -> tuple[str, dict]:
+    """
+    Returns a spoken failure response and records the failure in the issue tracker.
+
+    This is the anti-hallucination guarantee for actions:
+    Instead of returning ("", {}) and letting the LLM invent a success response,
+    every action handler calls this on failure to return a concrete, factual message.
+
+    Args:
+        component: Machine name for the issue tracker (e.g. "todoist", "google_calendar").
+        reason:    Human-readable error string, surfaced verbatim to the user.
+    """
+    try:
+        from jarvis_issue_tracker import record_failure
+        record_failure(component, reason, severity="high")
+    except Exception:
+        pass  # Never let the tracker block the voice response
+    return f"{reason}", {}
+
+
+# ─────────────────────────────────────────────────────────────
 # Date/time helpers
 # ─────────────────────────────────────────────────────────────
 def _parse_time(text: str) -> Optional[str]:
@@ -701,17 +724,28 @@ def _summarize_today() -> str:
         from jarvis_todoist import get_tasks
         tasks = get_tasks(filter_query="today | overdue")
         return f"You have {len(tasks)} tasks remaining today."
-    except:
-        return "I cannot access your tasks right now."
+    except Exception as e:
+        # Record the failure so it appears in health reports
+        try:
+            from jarvis_issue_tracker import record_failure
+            record_failure("todoist", f"get_tasks failed: {type(e).__name__}: {str(e)[:80]}", "high")
+        except Exception:
+            pass
+        return f"I cannot access your tasks right now, sir. Todoist error: {type(e).__name__}: {str(e)[:60]}"
 
 def _organize_tasks() -> tuple[str, dict]:
+    # Reality check: fetch tasks first; surface real failures before doing LLM work
     try:
         from jarvis_todoist import get_tasks, update_task
+        tasks = get_tasks()
+    except Exception as e:
+        return _action_failed("todoist", f"Task organization failed, sir. Could not fetch tasks from Todoist: {type(e).__name__}: {str(e)[:80]}")
+
+    try:
         from datetime import datetime
         import json
         from jarvis_llm import ask_llm
 
-        tasks = get_tasks()
         if not tasks:
             return "You have no active tasks to organize, sir.", {}
             
@@ -752,7 +786,12 @@ def _organize_tasks() -> tuple[str, dict]:
         if content.startswith("```json"): content = content[7:]
         if content.endswith("```"): content = content[:-3]
         
-        updates = json.loads(content.strip())
+        try:
+            updates = json.loads(content.strip())
+        except json.JSONDecodeError as e:
+            print(f"[Actions] Failed to parse auto-schedule JSON: {e}")
+            return "I failed to schedule the tasks due to a parsing error, sir.", {}
+            
         for u in updates:
             tid = str(u.get("id"))
             if tid in valid_ids:
@@ -784,15 +823,24 @@ def _organize_tasks() -> tuple[str, dict]:
                 if "description" in kwargs and kwargs["description"] != curr_desc:
                     has_changes = True
                     
-                if has_changes and update_task(tid, **kwargs):
-                    updated_count += 1
-                        
+                if has_changes:
+                    ok = update_task(tid, **kwargs)
+                    if ok:
+                        updated_count += 1
+                    else:
+                        # update_task returned falsy — record the failure
+                        try:
+                            from jarvis_issue_tracker import record_failure
+                            record_failure("todoist", f"update_task returned False for task {tid}", "high")
+                        except Exception:
+                            pass
+
         if updated_count > 0:
             return f"I have organized {updated_count} tasks, setting priorities, time schedules, and descriptions based on my analysis, sir.", {}
         else:
             return "I analyzed your tasks, but found they are already optimally scheduled, sir.", {}
     except Exception as e:
-        return f"I encountered an error organizing your tasks: {e}", {}
+        return _action_failed("todoist", f"Task organization failed, sir. Error: {type(e).__name__}: {str(e)[:80]}")
 
 def _update_project_interactive(project: str, status: str) -> str:
     try:
@@ -886,22 +934,24 @@ def handle_action(question: str, pending: dict) -> tuple[str, dict]:
         if re.search(r"\b(yes|yeah|sure|do it|ok|okay|yup|affirmative)\b", q):
             try:
                 import jarvis_todoist
-                jarvis_todoist.create_task(pending["task"])
-                return f"Task '{pending['task']}' added to Todoist, sir.", {}
+                result = jarvis_todoist.create_task(pending["task"])
+                if result:
+                    return f"Task '{pending['task']}' added to Todoist, sir.", {}
+                return _action_failed("todoist", f"Task creation failed, sir. Todoist returned no confirmation.")
             except Exception as e:
-                return f"Failed to add task to Todoist: {e}", {}
+                return _action_failed("todoist", f"Task creation failed, sir. Todoist error: {type(e).__name__}: {str(e)[:80]}")
         else:
             return "Cancelled adding task to Todoist, sir.", {}
-            
+
     if pa == "todoist_confirm_complete":
         if re.search(r"\b(yes|yeah|sure|do it|ok|okay|yup|affirmative)\b", q):
             try:
                 import jarvis_todoist
                 if jarvis_todoist.close_task(pending["task_id"]):
                     return "Task completed in Todoist, sir.", {}
-                return "Failed to complete task in Todoist.", {}
+                return _action_failed("todoist", "Task completion failed, sir. Todoist did not confirm the update.")
             except Exception as e:
-                return f"Failed to complete task: {e}", {}
+                return _action_failed("todoist", f"Task completion failed, sir. Todoist error: {type(e).__name__}: {str(e)[:80]}")
         else:
             return "Cancelled completing task, sir.", {}
 
@@ -932,42 +982,29 @@ def handle_action(question: str, pending: dict) -> tuple[str, dict]:
     # ── Self Improvement / Fix Bug ───────────────────────────
     if pa == "self_improvement_confirm":
         if re.search(r"\b(yes|yeah|sure|do it|ok|okay|yup|affirmative|approve|apply)\b", q):
-            try:
-                from openjarvis.jarvis_self_improvement import SelfImprovementOrchestrator
-                import threading
-                import asyncio
-                def _run_deploy():
-                    engine = SelfImprovementOrchestrator("/Users/pratikchoudhuri/Documents/antigravity/goofy-bose/OpenJarvis")
-                    success = asyncio.run(engine.apply_approved_improvement(pending["issue_id"], pending["proposal"]))
-                    if success:
-                        from jarvis_speak import speak
-                        speak("The code has been modified and tests passed. Please reboot to apply.")
-                threading.Thread(target=_run_deploy, daemon=True).start()
-                return "Applying the patch via Antigravity now, sir.", {}
-            except Exception as e:
-                return f"Failed to deploy code: {e}", {}
+            return "Please apply the proposed Antigravity patch manually, sir. Auto-apply is currently disabled for safety.", {}
         else:
             return "Self improvement rejected. Discarding the Antigravity proposal.", {}
 
-    if re.search(r"\b(fix this bug|i found a bug|implement a feature|analyze your performance|improve yourself|problems.*in yourself|wrong with you|fix yourself)\b", q):
+    if re.search(r"\b(fix this bug|i found a bug|implement a feature)\b", q):
         try:
-            from openjarvis.jarvis_self_improvement import SelfImprovementOrchestrator
             import threading
-            import asyncio
             def _run_trigger():
-                engine = SelfImprovementOrchestrator("/Users/pratikchoudhuri/Documents/antigravity/goofy-bose/OpenJarvis")
-                # Force log a manual issue so the engine has something to chew on
-                engine.tracker.log_issue("manual_request", f"User manually requested: {question}", severity="critical")
-                proposal = asyncio.run(engine.run_nightly_analysis())
+                try:
+                    from jarvis_failure_store import record_failure
+                    record_failure("manual_request", f"User manually requested: {question}", severity="critical")
+                except ImportError:
+                    pass
                 
-                from jarvis_speak import speak
-                speak("I have a proposal from Antigravity ready. Please check your console. Shall I apply the patch?")
-                
-                print(f"\n[Antigravity Proposal]\n{proposal}\n")
-                
-                # In a real setup, we would inject into the global `pending` state here.
-                # Since the thread is detached, we can't easily return the pending state directly
-                # to the synchronous listen loop. We rely on the console logs for now.
+                try:
+                    from jarvis_self_improvement import trigger_on_demand_analysis
+                    proposal = trigger_on_demand_analysis()
+                    
+                    from jarvis_speak import speak
+                    speak("I have a proposal from Antigravity ready. Please check your console.")
+                    print(f"\n[Antigravity Proposal]\n{proposal}\n")
+                except Exception as e:
+                    print(f"Failed analysis: {e}")
 
             threading.Thread(target=_run_trigger, daemon=True).start()
             return "I am spinning up an Antigravity subagent to investigate the codebase, sir. I will notify you when the proposal is ready.", {"action": "self_improvement_confirm", "issue_id": "manual_request", "proposal": question}
@@ -1052,7 +1089,7 @@ def handle_action(question: str, pending: dict) -> tuple[str, dict]:
             from jarvis_todoist import get_tasks_summary
             return get_tasks_summary(), {}
         except Exception as e:
-            return f"Error reading Todoist: {e}", {}
+            return _action_failed("todoist", f"Could not read tasks, sir. Todoist error: {type(e).__name__}: {str(e)[:80]}")
 
     if m := re.search(r"\b(?:add|create|new) task (.*)", q):
         task = m.group(1).strip()
@@ -1065,12 +1102,12 @@ def handle_action(question: str, pending: dict) -> tuple[str, dict]:
             tasks = jarvis_todoist.get_tasks()
             matches = [t for t in tasks if keyword in t["content"].lower()]
             if not matches:
-                return "I could not find a task matching that description in Todoist.", {}
-            
+                return "I could not find a task matching that description in Todoist, sir.", {}
+
             target = matches[0]
             return f"Should I close the task '{target['content']}' in Todoist, sir?", {"action": "todoist_confirm_complete", "task_id": target["id"]}
         except Exception as e:
-            return f"Failed to find task: {e}", {}
+            return _action_failed("todoist", f"Could not look up tasks, sir. Todoist error: {type(e).__name__}: {str(e)[:80]}")
         
     # ── Sessions & Universal Management ──────────────────────────
     if re.search(r"\b(what did i work on|how long did i|my sessions|work today)\b", q):
@@ -1085,6 +1122,25 @@ def handle_action(question: str, pending: dict) -> tuple[str, dict]:
         project = m.group(1).strip().title()
         status = m.group(2).strip()
         return _update_project_interactive(project, status), {}
+
+    # ── Active Project Engine ─────────────────────────────────────
+    if m := re.search(r"\b(?:pause|suspend)\s+(?:the\s+)?(?:project\s+)?(.+?)(?:\s+tasks?)?$", q):
+        project = m.group(1).strip()
+        try:
+            from jarvis_projects import set_project_status
+            set_project_status(project, "paused")
+            return f"Project '{project}' has been paused, sir. I will ignore tasks related to it.", {}
+        except ImportError:
+            return "Project engine not loaded, sir.", {}
+
+    if m := re.search(r"\b(?:focus on|resume|start|activate)\s+(?:the\s+)?(?:project\s+)?(.+?)(?:\s+tasks?)?$", q):
+        project = m.group(1).strip()
+        try:
+            from jarvis_projects import set_project_status
+            set_project_status(project, "active")
+            return f"Project '{project}' is now active, sir. I will prioritize it.", {}
+        except ImportError:
+            return "Project engine not loaded, sir.", {}
 
     # ── Play Media ───────────────────────────────────────────────
     if re.search(r"\b(play|listen to|watch)\b", q):

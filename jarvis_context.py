@@ -476,12 +476,17 @@ def _get_agent_context_data() -> list[dict]:
 
 
 # ─────────────────────────────────────────────────────────────
-# Main: build full context snapshot (runs in parallel threads)
+# Builder / Orchestrator
 # ─────────────────────────────────────────────────────────────
-
-_CACHE: dict = {}
-_CACHE_TIME: datetime = datetime.min
-_CACHE_TTL_SECONDS = 120   # refresh context every 2 min
+_CACHE = {}
+_CACHE_TIME = datetime.min
+perf_mode = os.environ.get("JARVIS_PERFORMANCE_MODE", "Balanced")
+if perf_mode == "M3 Air 8GB (Low Power)":
+    _CACHE_TTL_SECONDS = 1800  # 30 mins
+elif perf_mode == "Balanced":
+    _CACHE_TTL_SECONDS = 600   # 10 mins
+else:
+    _CACHE_TTL_SECONDS = 120   # 2 mins   # refresh context every 2 min
 
 
 def build_context(force: bool = False) -> str:

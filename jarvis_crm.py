@@ -100,7 +100,7 @@ def _read_imessage_db(since_minutes: int = LOOKBACK_MINS) -> list[dict]:
         return messages
     except Exception as e:
         print(f"[Auto-CRM] iMessage read failed: {e}")
-        return []
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,6 +206,17 @@ def _try_llm_enrich(contact: str, text: str) -> Optional[str]:
 def background_crm_processor():
     """Periodic sweep: reads messages → extracts CRM facts → writes to memory."""
     print("[Auto-CRM] Started background processor")
+    
+    perf_mode = os.environ.get("JARVIS_PERFORMANCE_MODE", "Balanced")
+    if perf_mode == "M3 Air 8GB (Low Power)":
+        base_interval = 3600  # 60 mins
+    elif perf_mode == "Balanced":
+        base_interval = 600   # 10 mins
+    else:
+        base_interval = POLL_INTERVAL
+        
+    consecutive_failures = 0
+        
     while True:
         try:
             # Collect messages from all sources
@@ -213,6 +224,8 @@ def background_crm_processor():
 
             # iMessage
             im_msgs = _read_imessage_db()
+            if im_msgs is None:
+                raise Exception("Failed to read iMessage DB")
             all_messages.extend(im_msgs)
             if im_msgs:
                 print(f"[Auto-CRM] Read {len(im_msgs)} iMessages")
@@ -249,10 +262,14 @@ def background_crm_processor():
                 save(mem)
                 print(f"[Auto-CRM] Updated CRM for {len(crm_updates)} contact(s): {list(crm_updates.keys())}")
 
-        except Exception as e:
-            print(f"[Auto-CRM] Error in sweep: {e}")
+            consecutive_failures = 0  # reset on success
+            time.sleep(base_interval)
 
-        time.sleep(POLL_INTERVAL)
+        except Exception as e:
+            consecutive_failures += 1
+            backoff = min(base_interval * (2 ** consecutive_failures), 3600 * 4) # cap at 4 hours
+            print(f"[Auto-CRM] Error in sweep: {e}. Backing off for {backoff} seconds.")
+            time.sleep(backoff)
 
 
 def start_auto_crm():

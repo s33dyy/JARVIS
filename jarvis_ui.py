@@ -828,6 +828,32 @@ class SettingsTab(QWidget):
         prl.addStretch()
         layout.addWidget(profile_row)
 
+        # ── Performance Mode ──────────────────────────────
+        section("⚡  Performance Mode", "Tune resource usage for your hardware.")
+        perf_row = QWidget()
+        perf_row.setObjectName("row")
+        perf_rl = QHBoxLayout(perf_row)
+        perf_rl.setContentsMargins(16, 12, 16, 12)
+        perf_rl.addWidget(_label("Resource Profile"))
+        perf_rl.addSpacing(16)
+        self._perf_mode_cb = QComboBox()
+        self._perf_mode_cb.addItems(["M3 Air 8GB (Low Power)", "Balanced", "Max Performance"])
+        
+        current_perf = os.environ.get("JARVIS_PERFORMANCE_MODE", "")
+        if not current_perf:
+            try:
+                import subprocess
+                ram_gb = int(subprocess.check_output(['sysctl', '-n', 'hw.memsize']).strip()) / (1024**3)
+                current_perf = "M3 Air 8GB (Low Power)" if ram_gb <= 8 else "Balanced"
+            except Exception:
+                current_perf = "Balanced"
+                
+        self._perf_mode_cb.setCurrentText(current_perf)
+        self._perf_mode_cb.setMinimumWidth(200)
+        perf_rl.addWidget(self._perf_mode_cb)
+        perf_rl.addStretch()
+        layout.addWidget(perf_row)
+
         layout.addSpacing(20)
         save_btn = _btn("💾  Save & Apply", "accent", on_click=self._save)
         save_btn.setFixedHeight(44)
@@ -856,6 +882,10 @@ class SettingsTab(QWidget):
         use_case_val = self._use_case_cb.currentText()
         os.environ["JARVIS_USE_CASE"] = use_case_val
         lines.append(f"JARVIS_USE_CASE={use_case_val}")
+        
+        perf_val = self._perf_mode_cb.currentText()
+        os.environ["JARVIS_PERFORMANCE_MODE"] = perf_val
+        lines.append(f"JARVIS_PERFORMANCE_MODE={perf_val}")
         
         ENV_PATH.write_text("\n".join(lines) + "\n")
         self._save_lbl.setText("✓  Settings saved to .env")

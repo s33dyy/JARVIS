@@ -107,6 +107,15 @@ def decide_actions(context: dict, override_instruction: str = "") -> list[dict]:
     context_lines.append(f"Current CRM Summaries: {crm}")
     if use_case != "Personal" and projects:
         context_lines.append(f"Current Project Statuses: {projects}")
+        
+    try:
+        from jarvis_projects import get_active_projects_context
+        proj_ctx = get_active_projects_context()
+        if proj_ctx:
+            context_lines.append(proj_ctx)
+    except ImportError:
+        pass
+        
     context_lines.append(f"Existing Tasks in Todoist: {context.get('todoist_tasks', '')[:300]}")
     context_str = "\n".join(context_lines)
 
@@ -159,6 +168,10 @@ Return ONLY valid JSON. E.g.
         from jarvis_llm import ask_llm
         content = ask_llm(prompt, system=system, max_tokens=150, temperature=0.3, model_type="smart")
         
+        if not content or not content.strip():
+            print("[Agentic OS] LLM returned empty response. Skipping decision cycle.")
+            return []
+
         # Strip markdown json block if present
         if content.startswith("```json"):
             content = content[7:]
@@ -168,6 +181,14 @@ Return ONLY valid JSON. E.g.
         actions = json.loads(content.strip())
         if isinstance(actions, list):
             return actions
+        return []
+    except json.JSONDecodeError as e:
+        print(f"[Agentic OS] LLM returned non-JSON: {e}")
+        try:
+            from jarvis_failure_store import record_failure
+            record_failure("autonomous_llm_parse", str(e)[:80], severity="medium", category="crash")
+        except Exception:
+            pass
         return []
     except Exception as e:
         print(f"[Agentic OS] LLM Decision Error: {e}")
@@ -251,12 +272,10 @@ from openjarvis.engines.crm_engine import CRMEngine
 from openjarvis.engines.reflection_engine import ReflectionEngine
 from openjarvis.engines.purpose_engine import PurposeEngine
 from openjarvis.engines.security_engine import SecurityEngine
-from openjarvis.jarvis_self_improvement import SelfImprovementOrchestrator
 
 # Global Event Bus for the OS
 os_bus = EventBus()
 active_engines = []
-self_improvement_engine = SelfImprovementOrchestrator("/Users/pratikchoudhuri/Documents/antigravity/goofy-bose/OpenJarvis")
 
 def _handle_proactive_trigger(event_data: dict):
     """Handle proactive notifications from engines with DND awareness."""
@@ -315,23 +334,60 @@ async def run_engines():
                 audit_log(executed)
         except Exception as e:
             print(f"[Agentic OS] Main Loop Error: {e}")
-            self_improvement_engine.monitor.capture_exception("jarvis_autonomous.main_loop", e)
-            
-        # Trigger nightly analysis at midnight
-        now = datetime.now()
-        if now.hour == 0 and now.minute < 10:
             try:
-                proposal = await self_improvement_engine.run_nightly_analysis()
-                if "Antigravity Proposal:" in proposal:
+                from jarvis_failure_store import record_failure
+                record_failure("crash_jarvis_autonomous.main_loop", str(e)[:120], severity="critical", category="crash")
+            except Exception:
+                pass  # Never let tracker errors break the main loop
+
+            
+        # Trigger nightly analysis at next eligible window
+        from pathlib import Path
+        from datetime import date
+        _LAST_NIGHTLY_FILE = Path.home() / ".jarvis" / "last_nightly_run.txt"
+        should_run = False
+        try:
+            if _LAST_NIGHTLY_FILE.exists():
+                last_run = _LAST_NIGHTLY_FILE.read_text().strip()
+                if last_run != date.today().isoformat():
+                    should_run = True
+            else:
+                should_run = True
+        except Exception:
+            should_run = True
+            
+        now = datetime.now()
+        if should_run and (now.hour >= 23 or now.hour < 6):
+            try:
+                # Use the top-level jarvis_self_improvement module
+                from jarvis_self_improvement import run_nightly_analysis
+                proposal = await run_nightly_analysis()
+                
+                # Mark done
+                _LAST_NIGHTLY_FILE.parent.mkdir(parents=True, exist_ok=True)
+                _LAST_NIGHTLY_FILE.write_text(date.today().isoformat())
+                
+                if proposal and "Antigravity Proposal:" in proposal:
                     os_bus.publish("engine.proactive_trigger", {
-                        "message": f"Sir, I have prepared a self-improvement proposal. Check your logs.",
+                        "message": "Sir, I have completed my nightly self-analysis. I have prepared improvement proposals. Check your logs.",
                         "engine_name": "SelfImprovement"
                     })
-                    print(f"\n[SelfImprovement]\n{proposal}\n")
+                    print(f"\n[SelfImprovement — Nightly Analysis]\n{proposal}\n", flush=True)
+                elif proposal:
+                    print(f"\n[SelfImprovement — Nightly Analysis]\n{proposal}\n", flush=True)
             except Exception as e:
-                print(f"[SelfImprovement] Nightly analysis failed: {e}")
+                print(f"[SelfImprovement] Nightly analysis failed: {e}", flush=True)
             
-        await asyncio.sleep(600)  # legacy 10 min polling
+        import os
+        perf_mode = os.environ.get("JARVIS_PERFORMANCE_MODE", "Balanced")
+        if perf_mode == "M3 Air 8GB (Low Power)":
+            sleep_time = 600  # 10 mins
+        elif perf_mode == "Balanced":
+            sleep_time = 300  # 5 mins
+        else:
+            sleep_time = 60   # 1 min
+            
+        await asyncio.sleep(sleep_time)
 
 def background_loop():
     print("[Agentic OS] Engine Manager starting...")
