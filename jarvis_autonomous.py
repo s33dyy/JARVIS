@@ -119,9 +119,14 @@ def decide_actions(context: dict, override_instruction: str = "") -> list[dict]:
     context_lines.append(f"Existing Tasks in Todoist: {context.get('todoist_tasks', '')[:300]}")
     context_str = "\n".join(context_lines)
 
-    prompt = f"""
-You are JARVIS, an advanced AI Operating System and personalized ADHD coach.
-Your job is to track projects, manage tasks, and propose actions based on the user's messy context.
+    try:
+        from pathlib import Path
+        system_path = Path(__file__).parent / "configs" / "system_instruction.md"
+        base_system = system_path.read_text(encoding="utf-8")
+    except Exception:
+        base_system = "You are JARVIS. Voice CEO."
+
+    prompt = f"""{base_system}
 {use_case_guidance}
 
 JARVIS plans, the user executes. Do not execute actions directly.
@@ -133,8 +138,6 @@ Auto-CRM Data available: {json.dumps(crm_data[-5:])}
 
 Current Coaching Persona: {style}
 Current Tone: {tone}
-With time, you are becoming a reflection of the user. Use this persona to provide constructive positive or negative feedback when analyzing their workload.
-If they have too many overdue tasks, be firm and strict. If they are on top of things, be encouraging.
 
 The user has ADHD. You MUST break tasks down into micro-chunks (15-20 min max). 
 If a task does not require the user's explicit expertise, prepend `[DELEGATE]` to the task name.
@@ -147,8 +150,8 @@ Available Actions:
 2. {{"action": "coach_user", "params": {{"feedback": "..."}}}}
 
 IMPORTANT RULES FOR TASK CREATION:
-1. NEVER create generic junk tasks like "Review unread emails" or "Check uncommitted changes in OpenJarvis".
-2. Only `propose_task` if there is a HIGHLY URGENT, EXPLICIT action required (e.g. "Fix production crash", "Reply to CEO by 5pm").
+1. NEVER create generic junk tasks like "Review unread emails".
+2. Only `propose_task` if there is a HIGHLY URGENT, EXPLICIT action required.
 3. DO NOT create tasks just because there are unread emails or git changes. Ignore them unless they contain an urgent directive.
 4. If there is nothing critical to do, DO NOT output any `propose_task` actions. Just output `coach_user` or an empty list.
 5. Do not duplicate existing tasks.

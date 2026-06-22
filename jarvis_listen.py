@@ -224,29 +224,34 @@ def ask_jarvis(question: str, jarvis_dir: str) -> str:
     except Exception:
         health_ctx = ""
 
+    system_path = Path(jarvis_dir) / "configs" / "system_instruction.md"
+    try:
+        base_system = system_path.read_text(encoding="utf-8")
+    except Exception:
+        base_system = "You are JARVIS. Voice CEO."
+
     system = (
-        "You are JARVIS, Tony Stark's AI, acting as an ADHD coach for the user. British, witty, concise. "
-        "Always address user as 'sir'. Break tasks into tiny 15-minute micro-steps to prevent overwhelm. "
-        "IMPORTANT: If the user asks for heavy work after 5 PM, gently suggest doing it tomorrow. "
-        "Max 2 sentences. Never repeat words. Do NOT hallucinate.\n\n"
+        f"{base_system}\n\n"
         "User's current state based on recent CRM/Messages:\n"
         f"{crm_state}\n\n"
         "User's current task load:\n"
         f"{todoist_mood}\n\n"
         f"{health_ctx}\n\n"
-        "CRITICAL: If system failures are listed above, you MUST report them honestly. "
-        "Never say 'everything is fine' when failures exist."
     )
 
     def _clean(txt: str) -> str:
+        # Enforce output parsing to aggressively strip preamble and sycophancy
+        txt = re.sub(r"^(certainly|of course|great question|absolutely|sure|I'd be happy to)[^\w]", "", txt, flags=re.IGNORECASE)
+        txt = re.sub(r"^(sir, )?(certainly|of course)[^\w]", "", txt, flags=re.IGNORECASE)
+        txt = re.sub(r"As an AI language model,?", "", txt, flags=re.IGNORECASE)
         txt = re.sub(r"\*\*(.+?)\*\*", r"\1", txt)
         txt = re.sub(r"\*(.+?)\*",     r"\1", txt)
         txt = re.sub(r"#+\s*",         "",    txt)
         txt = re.sub(r"\n+",           " ",   txt)
-        return _derepeat(txt)
+        return _derepeat(txt.strip(" ,.:;"))
 
     from jarvis_llm import ask_llm
-    answer = ask_llm(prompt[:600], system=system, max_tokens=80, temperature=0.5, model_type="fast")
+    answer = ask_llm(prompt[:600], system=system, max_tokens=150, temperature=0.3, model_type="fast")
     if answer:
         answer = _clean(answer)
     # Tier 3: Offline canned response
@@ -256,11 +261,42 @@ def ask_jarvis(question: str, jarvis_dir: str) -> str:
 
     # Save to persistent memory
     try:
-        from jarvis_memory import add_exchange, extract_and_save_facts
-        add_exchange(question, answer)
-        extract_and_save_facts(question, answer)
-    except Exception:
-        pass
+        from jarvis_memory import add_exchange, extract_and_save_facts, load, save
+        mem = load()
+        
+        # [BOOT CHECKLIST]
+        if not mem.get("conversations"):
+            answer = (
+                "JARVIS initializing. Running first-boot setup. "
+                "[BOOT CHECKLIST] User profile creation, Project context load, Capability registry init, Bug log init, CRM init. "
+                "To calibrate: What are you working on right now, and what's the most important thing I should know about how you like to work?"
+            )
+            mem["session_count"] = mem.get("session_count", 0) + 1
+            save(mem)
+        else:
+            add_exchange(question, answer)
+            extract_and_save_facts(question, answer)
+            
+            # Engine 2 triggers
+            from jarvis_self_improvement import run_internal_audit_pass, trigger_persona_adaptation
+            
+            def run_hooks():
+                # 2A. Bug Detection
+                has_bug, flag_msg = run_internal_audit_pass(question, answer, short_ctx)
+                if has_bug and flag_msg:
+                    print(f"\n  [Self-Improvement] {flag_msg}\n", flush=True)
+                
+                # 2B. Persona Adaptation (every 5 interactions)
+                convos = mem.get("conversations", [])
+                if len(convos) > 0 and len(convos) % 5 == 0:
+                    profile_flag = trigger_persona_adaptation(convos[-5:])
+                    if profile_flag:
+                        print(f"\n  [Self-Improvement] {profile_flag}\n", flush=True)
+
+            threading.Thread(target=run_hooks, daemon=True).start()
+
+    except Exception as e:
+        print(f"  ⚠️ Error in post-processing hooks: {e}")
 
     return answer or "Ready and standing by, sir."
 

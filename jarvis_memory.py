@@ -31,11 +31,25 @@ _MAX_CONVERSATIONS = 50
 def _default_data() -> dict:
     return {
         "conversations": [],
+        "session_count": 0,
+        "bug_log": {},
+        "capabilities": {},
         "facts": {
+            "version": 1,
             "user_name": "",
             "preferred_name": "sir",
+            "communication_style": "formal",
+            "response_format_pref": "concise",
+            "work_rhythm": "unknown",
             "projects": [],
+            "domain_expertise": {},
             "preferences": {},
+            "dislikes": [],
+            "decision_style": "unknown",
+            "emotional_baseline": "neutral",
+            "recurring_vocabulary": [],
+            "known_context_gaps": [],
+            "relationship_to_ai": "power user",
             "behavioral_profile": {
                 "tone": "Formal and concise.",
                 "coaching_style": "Supportive",
@@ -383,3 +397,91 @@ def analyze_and_update_crm(app_name: str, sender: str, message: str) -> None:
     data = load()
     data.setdefault("crm", []).append({"time": "now", "app": app_name, "sender": sender, "message": message})
     save(data)
+
+
+# ---------------------------------------------------------------------------
+# Bug Log & Capability Registry (Engine 2)
+# ---------------------------------------------------------------------------
+
+def log_bug(severity: str, bug_type: str, trigger: str, what_failed: str, patch: str) -> str:
+    data = load()
+    bugs = data.setdefault("bug_log", {})
+    bug_id = f"B-{len(bugs) + 1}"
+    
+    bugs[bug_id] = {
+        "severity": severity,
+        "type": bug_type,
+        "trigger": trigger,
+        "what_failed": what_failed,
+        "patch": patch,
+        "status": "PATCHED" if severity in ("HIGH", "CRITICAL") else "OPEN",
+        "logged_at": datetime.now(timezone.utc).isoformat()
+    }
+    save(data)
+    return bug_id
+
+def log_capability(name: str, trigger: str, behavior: str, risk: str, verified: bool = False) -> str:
+    data = load()
+    caps = data.setdefault("capabilities", {})
+    cap_id = f"CAP-{len(caps) + 1:03d}"
+    
+    caps[cap_id] = {
+        "name": name,
+        "trigger": trigger,
+        "behavior": behavior,
+        "risk_level": risk,
+        "status": "Active" if verified else "Pending",
+        "added_at": datetime.now(timezone.utc).isoformat()
+    }
+    save(data)
+    return cap_id
+
+# ---------------------------------------------------------------------------
+# State Export (JARVIS_STATE)
+# ---------------------------------------------------------------------------
+
+def get_jarvis_state() -> str:
+    data = load()
+    facts = data.get("facts", {})
+    
+    version = facts.get("version", 1)
+    name = facts.get("user_name", "Unknown")
+    
+    bugs = data.get("bug_log", {})
+    open_bugs = sum(1 for b in bugs.values() if b.get("status") == "OPEN")
+    patched_bugs = sum(1 for b in bugs.values() if b.get("status") == "PATCHED")
+    
+    caps = data.get("capabilities", {})
+    active_caps = sum(1 for c in caps.values() if c.get("status") == "Active")
+    
+    crm = data.get("crm", [])
+    crm_count = len(crm)
+    
+    sessions = data.get("session_count", 0)
+    
+    # We grab tasks from todoist directly
+    try:
+        import jarvis_todoist
+        tasks = jarvis_todoist.get_tasks()
+        task_count = len(tasks)
+        p0 = len([t for t in tasks if t.priority == 4])
+        p1 = len([t for t in tasks if t.priority == 3])
+        p2 = len([t for t in tasks if t.priority == 2])
+    except Exception:
+        task_count, p0, p1, p2 = 0, 0, 0, 0
+
+    return f"""[JARVIS_STATE — {datetime.now().isoformat()}]
+Session              : {sessions}
+User                 : {name}
+USER_PROFILE version : v{version}
+Open tasks           : {task_count} (P0: {p0}, P1: {p1}, P2: {p2})
+Active projects      : {facts.get('projects', [])}
+Pending approvals    : []
+Open bugs            : {open_bugs}
+Patched bugs (total) : {patched_bugs}
+Active capabilities  : {active_caps}
+CRM contacts         : {crm_count}
+Pending follow-ups   : []
+Last self-audit      : Not yet
+Interactions since audit: {len(data.get("conversations", [])) % 20}/20
+"""

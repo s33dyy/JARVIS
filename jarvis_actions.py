@@ -888,6 +888,21 @@ def handle_action(question: str, pending: dict) -> tuple[str, dict]:
     """
     q = question.lower()
 
+    # ── Voice CEO Directives ────────────────────────────────
+    if q.strip() in ("jarvis, status", "status", "jarvis status"):
+        try:
+            from jarvis_memory import get_jarvis_state
+            return get_jarvis_state(), {}
+        except Exception as e:
+            return f"Status unavailable: {e}", {}
+
+    if q.strip() in ("jarvis, self-audit", "self-audit", "self audit"):
+        try:
+            from jarvis_self_improvement import generate_self_audit_report
+            return generate_self_audit_report(), {}
+        except Exception as e:
+            return f"Self-audit failed: {e}", {}
+
     # ── Multi-turn completion ────────────────────────────────
     pa = pending.get("action")
 
