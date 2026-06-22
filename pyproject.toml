@@ -209,3 +209,8 @@ select = ["E", "F", "I", "W"]
 dev = [
     "maturin>=1.12.6",
 ]
+
+[tool.uv]
+override-dependencies = [
+    "tflite-runtime; python_version < '3.12'",
+]

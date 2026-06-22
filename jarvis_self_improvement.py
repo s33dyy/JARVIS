@@ -332,6 +332,11 @@ async def run_nightly_analysis() -> str:
 
     try:
         # Use the existing AntigravityClient from the src package
+        import sys
+        _src_path = str(Path(__file__).parent / "src")
+        if _src_path not in sys.path:
+            sys.path.insert(0, _src_path)
+            
         from openjarvis.jarvis_self_improvement.antigravity_client import AntigravityClient
         workspace = str(Path(__file__).parent)
         client = AntigravityClient(workspace)

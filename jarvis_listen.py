@@ -648,13 +648,15 @@ def main() -> None:
 
         with sd.InputStream(samplerate=SAMPLE_RATE, channels=1,
                             dtype="int16", blocksize=CHUNK_SIZE,
-                            callback=mic_callback):
+                            callback=mic_callback) as stream:
             while True:
                 if is_continuous:
+                    stream.stop()
                     res = handle(continuous_mode=True)
                     if res == "EXIT_CONTINUOUS":
                         is_continuous = False
                         print("\n  ✨  Say 'Hey JARVIS' to wake me up. Press Ctrl+C to stop.\n")
+                    stream.start()
                     continue
 
                 time.sleep(CHUNK_MS / 1000)
@@ -673,11 +675,13 @@ def main() -> None:
                         print("  🔔  Wake word detected!", flush=True)
                         with lock:
                             audio_q.clear()
+                        stream.stop()
                         res = handle(continuous_mode=False)
                         if res == "ENTER_CONTINUOUS":
                             is_continuous = True
                         with lock:
                             audio_q.clear()
+                        stream.start()
                         break
 
 
