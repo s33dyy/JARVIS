@@ -48,9 +48,39 @@ echo        Python: %PYVER%
 
 node --version >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
-    echo [ERROR] Node.js not found. Install Node.js 20+ from https://nodejs.org
-    exit /b 1
+    echo        Node.js not found. Installing automatically...
+    echo        [1a] Downloading Node.js installer...
+    
+    :: Try winget first (Windows 10+)
+    winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements >> "%LOGFILE%" 2>&1
+    if errorlevel 1 (
+        :: Fallback: download with PowerShell
+        echo        [1a] winget failed, downloading manually...
+        powershell -Command "& {[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri 'https://nodejs.org/dist/v20.18.0/node-v20.18.0-x64.msi' -OutFile '$env:TEMP\nodejs.msi'}" >> "%LOGFILE%" 2>&1
+        if errorlevel 1 (
+            echo [ERROR] Could not download Node.js. Install manually from https://nodejs.org
+            exit /b 1
+        )
+        echo        [1b] Running Node.js installer (requires admin)...
+        msiexec /i "%TEMP%\nodejs.msi" /qn >> "%LOGFILE%" 2>&1
+        if errorlevel 1 (
+            echo [ERROR] Node.js installer failed. Install manually from https://nodejs.org
+            exit /b 1
+        )
+    )
+    
+    :: Refresh PATH for this session
+    set "PATH=%PATH%;C:\Program Files\nodejs"
+    
+    :: Verify installation
+    node --version >> "%LOGFILE%" 2>&1
+    if errorlevel 1 (
+        echo [ERROR] Node.js installed but not in PATH. Restart terminal and try again.
+        exit /b 1
+    )
+    echo        Node.js installed successfully.
 )
+
 for /f "tokens=*" %%i in ('node --version 2^>^&1') do set NODEVER=%%i
 echo        Node.js: %NODEVER%
 echo.
