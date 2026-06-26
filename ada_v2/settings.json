@@ -1,0 +1,33 @@
+{
+    "gemini_api_key": "",
+    "openrouter_api_key": "",
+    "nvidia_api_key": "",
+    "local_model_path": "",
+    "preferred_engine": "auto",
+    "ollama_model": "auto",
+    "voice": "Aoede",
+    "face_auth_enabled": true,
+    "camera_flipped": true,
+    "tool_permissions": {
+        "generate_cad": true,
+        "run_web_agent": true,
+        "write_file": true,
+        "read_directory": true,
+        "read_file": true,
+        "create_project": true,
+        "switch_project": true,
+        "list_projects": true,
+        "self_improve": true,
+        "run_terminal": true,
+        "run_python_code": true,
+        "install_package": true
+    },
+    "self_improvement": {
+        "enabled": true,
+        "audit_every_n": 20,
+        "auto_apply_patches": false,
+        "opencode_model": "nvidia/llama-3.1-nemotron-ultra-253b-v1"
+    },
+    "printers": [],
+    "kasa_devices": []
+}

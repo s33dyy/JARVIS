@@ -1,0 +1,140 @@
+{
+  "name": "jarvis",
+  "productName": "J.A.R.V.I.S",
+  "version": "1.0.0",
+  "description": "J.A.R.V.I.S — Just A Rather Very Intelligent System",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on tcp:5173 && npx electron .\"",
+    "build": "vite build && cp public/hand_landmarker.task dist/assets/",
+    "start": "npx electron .",
+    "build:backend:mac": "cd backend && ../.venv/bin/pyinstaller jarvis.spec --distpath ../dist-py && bash ../scripts/bundle-playwright.sh",
+    "build:backend:win": "cd backend && ..\\.venv\\Scripts\\pyinstaller jarvis.spec --distpath ..\\dist-py && powershell ..\\scripts\\bundle-playwright.ps1",
+    "dist:mac": "npm run build && npm run build:backend:mac && electron-builder --mac --publish never",
+    "dist:win": "npm run build && npm run build:backend:win && electron-builder --win --publish never",
+    "dist": "npm run build && electron-builder --publish never"
+  },
+  "keywords": [],
+  "author": "Pratik",
+  "license": "ISC",
+  "build": {
+    "appId": "com.jarvis.ai",
+    "productName": "J.A.R.V.I.S",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist-py/jarvis_server",
+        "to": "backend/jarvis_server",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "backend/settings.json",
+        "to": "backend/settings.json"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": false
+    },
+    "dmg": {
+      "title": "J.A.R.V.I.S Installer",
+      "background": "assets/dmg-bg.png",
+      "window": {
+        "width": 540,
+        "height": 380
+      },
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signingHashAlgorithms": [],
+      "sign": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "J.A.R.V.I.S",
+      "warningsAsErrors": false
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    }
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.22-rc.20250304",
+    "@react-three/drei": "^9.99.0",
+    "@react-three/fiber": "^8.15.16",
+    "@types/three": "^0.160.0",
+    "clsx": "^2.1.0",
+    "framer-motion": "^11.0.0",
+    "lucide-react": "^0.300.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "socket.io-client": "^4.7.4",
+    "tailwind-merge": "^2.2.0",
+    "three": "^0.160.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.17",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^28.2.0",
+    "electron-builder": "^24.13.3",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "vite": "^5.1.0",
+    "wait-on": "^7.2.0"
+  }
+}
