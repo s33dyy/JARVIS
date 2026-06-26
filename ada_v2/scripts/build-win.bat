@@ -35,8 +35,8 @@ echo  Project root: %PROJECT_ROOT%
 echo  Log file: %LOGFILE%
 echo.
 
-:: ── Step 1: Check Python ────────────────────────────────────
-echo [1/6] Checking Python...
+:: ── Step 1: Check Python + Node ──────────────────────────────
+echo [1/6] Checking prerequisites...
 python --version >> "%LOGFILE%" 2>&1
 if errorlevel 1 (
     echo [ERROR] Python not found. Install Python 3.11+ from https://python.org/downloads
@@ -44,7 +44,16 @@ if errorlevel 1 (
     exit /b 1
 )
 for /f "tokens=*" %%i in ('python --version 2^>^&1') do set PYVER=%%i
-echo        Found: %PYVER%
+echo        Python: %PYVER%
+
+node --version >> "%LOGFILE%" 2>&1
+if errorlevel 1 (
+    echo [ERROR] Node.js not found. Install Node.js 20+ from https://nodejs.org
+    exit /b 1
+)
+for /f "tokens=*" %%i in ('node --version 2^>^&1') do set NODEVER=%%i
+echo        Node.js: %NODEVER%
+echo.
 
 :: ── Step 2: Create venv ─────────────────────────────────────
 echo [2/6] Setting up virtual environment...
@@ -215,18 +224,25 @@ powershell -ExecutionPolicy Bypass -File "%PROJECT_ROOT%\scripts\bundle-playwrig
 
 :: npm install
 echo        [6b] Installing Node.js dependencies...
-call npm install >> "%LOGFILE%" 2>&1
+call npm install 2>&1
 if errorlevel 1 (
-    echo [ERROR] npm install failed. Check %LOGFILE%
+    echo.
+    echo [ERROR] npm install failed. Common fixes:
+    echo         1. Delete node_modules and try again: rmdir /s /q node_modules
+    echo         2. Clear npm cache: npm cache clean --force
+    echo         3. Check if Node.js is in PATH: node --version
+    echo         4. Full log: %LOGFILE%
     exit /b 1
 )
 echo        Node.js dependencies installed.
 
 :: Vite build
 echo        [6c] Building React frontend...
-call npm run build >> "%LOGFILE%" 2>&1
+call npm run build 2>&1
 if errorlevel 1 (
-    echo [ERROR] Vite build failed. Check %LOGFILE%
+    echo.
+    echo [ERROR] Vite build failed. Check the error above.
+    echo         Full log: %LOGFILE%
     exit /b 1
 )
 echo        Frontend built.
